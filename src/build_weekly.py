@@ -43,6 +43,9 @@ def load_raw(rel: str, **kw) -> pd.DataFrame | None:
         print(f"  [SKIP] raw 없음: {rel}")
         return None
     df = pd.read_csv(p, encoding="utf-8-sig", **kw)
+    if df.empty:
+        print(f"  [SKIP] raw 비어있음: {rel}")
+        return None
     df.rename(columns={df.columns[0]: "date"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
     df["week_id"] = df["date"].map(week_id)
