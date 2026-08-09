@@ -367,7 +367,7 @@ def main():
     html = HTML.replace("__PAYLOAD__",
                         json.dumps(payload, ensure_ascii=False, default=str))
     OUT.write_text(html, encoding="utf-8")
-    print(f"[DONE] {OUT} ({len(html)//1024} KB, {len(payload['price'])} weeks)%")
+    print(f"[DONE] {OUT} ({len(html)//1024} KB, {len(payload['price'])} weeks)")
 
 
 if __name__ == "__main__":
