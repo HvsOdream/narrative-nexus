@@ -107,6 +107,9 @@ def build_price(daily: pd.DataFrame, mktcap: pd.DataFrame | None,
 
     w = w.sort_values("week_id").reset_index(drop=True)
     w["ret_w"] = w["close"] / w["close"].shift(1) - 1
+    for _c in ("value_traded", "mktcap"):
+        if _c not in w.columns:
+            w[_c] = np.nan
     w["turnover_w"] = w["value_traded"] / w["mktcap"]
     w["ticker"] = TICKER
     return w
