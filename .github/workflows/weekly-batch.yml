@@ -1,0 +1,50 @@
+name: weekly-batch
+
+on:
+  schedule:
+    - cron: "0 0 * * 6"   # 토요일 09:00 KST (§2.1 배치 요일)
+  workflow_dispatch: {}    # 수동 실행 (첫 백필 포함)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-batch
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30    # §8.6 주간 배치 30분 상한
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install pykrx finance-datareader pytrends pandas lxml
+
+      - name: Collect
+        run: python src/collect_v1.py
+        continue-on-error: true
+
+      - name: Build weekly
+        run: python src/build_weekly.py
+
+      - name: Dashboard
+        run: python src/dashboard.py
+
+      - name: Commit results
+        run: |
+          git config user.name "nexus-bot"
+          git config user.email "withsky0@gmail.com"
+          git add data/raw data/nexus.db docs/
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "batch: weekly update $(date -u +%Y-%m-%d)"
+            git push
+          fi
