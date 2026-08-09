@@ -37,6 +37,8 @@ RESULTS = {}   # source -> 'ok'|'fail: ...'
 
 
 def save(df, source: str, name: str, meta: dict | None = None):
+    if df is None or len(df) == 0:
+        raise RuntimeError("빈 응답(0행) — 차단/스로틀 의심, 기존 raw 보존")
     d = RAW / source
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"{name}.csv"
@@ -144,9 +146,13 @@ def main():
 
     collect_ohlcv()
     collect_fdr()
+    time.sleep(5)
     collect_flow()
+    time.sleep(5)
     collect_short_balance()
+    time.sleep(5)
     collect_short_volume()
+    time.sleep(5)
     collect_mktcap()
     collect_usdkrw()
     if not skip_trends:
