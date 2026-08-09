@@ -1,0 +1,5 @@
+pykrx
+finance-datareader
+pytrends
+pandas
+lxml
