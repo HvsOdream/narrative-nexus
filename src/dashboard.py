@@ -1,20 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-서사 넥서스 v1.1 — 관찰 대시보드 생성기
-nexus.db → docs/index.html (단일 자립 HTML, GitHub Pages 서빙)
-
-구성: 주봉 캔들 + 단계 라벨 배경 밴드 + 이벤트 마커
-      + 수급 패널(개인 비중·회전율) + 공매도 패널 + 서사 패널(트렌드 z·뉴스 모멘텀)
+서사 넥서스 v1.2 — 관찰 대시보드 생성기 (멀티 종목)
+nexus.db → docs/<ticker>.html × N + docs/index.html (대표: 에코프로)
 """
 import json
+import shutil
 import sqlite3
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "nexus.db"
-OUT = ROOT / "docs" / "index.html"
-TICKER = "086520"
+DOCS = ROOT / "docs"
+
+TICKERS = {
+    "086520": {"name": "에코프로", "keyword": "에코프로", "note": "2023 풀 사이클 (최대 진폭 표본)"},
+    "001570": {"name": "금양", "keyword": "금양", "note": "2023 동반 급등 → 몰락 (인물 서사·무한 유예형)"},
+    "000250": {"name": "삼천당제약", "keyword": "삼천당제약", "note": "장주기 실타래 → 2026 재점화-붕괴 (§8.4)"},
+}
 
 
 def rows(con, sql, params=()):
@@ -22,40 +25,39 @@ def rows(con, sql, params=()):
     return [dict(r) for r in con.execute(sql, params)]
 
 
-def build_payload():
+def build_payload(ticker):
+    info = TICKERS[ticker]
+    if not DB.exists():
+        return {"generated_at": date.today().isoformat(), "ticker": ticker,
+                "name": info["name"], "main_keyword": info["keyword"],
+                "weeks": [], "price": [], "flow": [], "narrative": [],
+                "labels": [], "events": []}
     con = sqlite3.connect(DB)
     weeks = rows(con, "SELECT * FROM weeks ORDER BY week_id")
-    price = rows(con, "SELECT * FROM weekly_price WHERE ticker=? ORDER BY week_id", (TICKER,))
-    flow = rows(con, "SELECT * FROM weekly_flow WHERE ticker=? ORDER BY week_id", (TICKER,))
+    price = rows(con, "SELECT * FROM weekly_price WHERE ticker=? ORDER BY week_id", (ticker,))
+    flow = rows(con, "SELECT * FROM weekly_flow WHERE ticker=? ORDER BY week_id", (ticker,))
     try:
         narr = rows(con, "SELECT * FROM weekly_narrative ORDER BY week_id")
     except sqlite3.OperationalError:
         narr = []
     try:
         labels = rows(con, """SELECT * FROM cycle_labels WHERE ticker=?
-                              ORDER BY week_id, labeled_at""", (TICKER,))
+                              ORDER BY week_id, labeled_at""", (ticker,))
     except sqlite3.OperationalError:
         labels = []
     try:
-        events = rows(con, "SELECT * FROM events ORDER BY date")
+        events = rows(con, "SELECT * FROM events WHERE ticker=? ORDER BY date", (ticker,))
     except sqlite3.OperationalError:
         events = []
     con.close()
 
-    # 최신 labeled_at만 채택 (수정 이력은 DB에 보존, 표시용은 최신)
     latest = {}
     for l in labels:
-        latest[l["week_id"]] = l   # 정렬상 마지막 labeled_at이 남음
-    return {
-        "generated_at": date.today().isoformat(),
-        "ticker": TICKER,
-        "weeks": weeks,
-        "price": price,
-        "flow": flow,
-        "narrative": narr,
-        "labels": list(latest.values()),
-        "events": events,
-    }
+        latest[l["week_id"]] = l
+    return {"generated_at": date.today().isoformat(), "ticker": ticker,
+            "name": info["name"], "main_keyword": info["keyword"],
+            "weeks": weeks, "price": price, "flow": flow, "narrative": narr,
+            "labels": list(latest.values()), "events": events}
 
 
 HTML = r"""<!DOCTYPE html>
@@ -63,14 +65,14 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>서사 넥서스 — 에코프로 2023 관찰기</title>
+<title>서사 넥서스 — __NAME__</title>
 <style>
   .viz-root {
     color-scheme: light;
     --surface-1:#fcfcfb; --page:#f9f9f7;
     --ink-1:#0b0b0b; --ink-2:#52514e; --ink-mut:#898781;
     --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
-    --up:#e34948; --down:#2a78d6;           /* 국내 관례: 상승=적 / 하락=청 */
+    --up:#e34948; --down:#2a78d6;
     --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4;
     --band-dormant:rgba(137,135,129,.10); --band-genesis:rgba(27,175,122,.12);
     --band-diffusion:rgba(237,161,0,.13); --band-saturation:rgba(227,73,72,.13);
@@ -94,6 +96,11 @@ HTML = r"""<!DOCTYPE html>
          font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif; }
   .wrap { max-width:1080px; margin:0 auto; padding:20px 16px 48px; }
   h1 { font-size:20px; margin:8px 0 2px; }
+  .nav { display:flex; gap:8px; margin:0 0 10px; flex-wrap:wrap; }
+  .nav a { font-size:13px; text-decoration:none; color:var(--ink-2);
+           border:1px solid var(--border); border-radius:16px; padding:4px 12px;
+           background:var(--surface-1); }
+  .nav a.on { color:var(--ink-1); font-weight:600; border-color:var(--ink-mut); }
   .sub { color:var(--ink-2); font-size:13px; margin-bottom:14px; }
   .sub b { color:var(--ink-1); }
   .caveat { font-size:12px; color:var(--ink-mut); margin:4px 0 16px; }
@@ -122,9 +129,10 @@ HTML = r"""<!DOCTYPE html>
 </head>
 <body class="viz-root">
 <div class="wrap">
-  <h1>서사 넥서스 — 에코프로(086520) 2023 풀 사이클</h1>
-  <div class="sub">주봉 관찰기 · 생성일 <b id="gen"></b> · 자동 갱신(GitHub Actions, 토요일)</div>
-  <div class="caveat">⚠ 예측기가 아닌 관찰기입니다. 모든 지표는 "서사가 어디쯤 와 있는가"의 기술이며 매매 신호가 아닙니다. 단계 밴드는 해석(라벨)이고 지표는 사실입니다 — 둘은 분리 저장됩니다.</div>
+  <h1>서사 넥서스 — __NAME__(__TICKER__)</h1>
+  <div class="nav">__NAV__</div>
+  <div class="sub">주봉 관찰기 · __NOTE__ · 생성일 <b id="gen"></b> · 자동 갱신(GitHub Actions, 토요일)</div>
+  <div class="caveat">⚠ 예측기가 아닌 관찰기입니다. 모든 지표는 "서사가 어디쯤 와 있는가"의 기술이며 매매 신호가 아닙니다. 단계 밴드는 해석(띻벨)이고 지표는 사실입니다 — 둘은 분리 저장됩니다.</div>
   <div id="app"></div>
   <details><summary>데이터 표 보기 (접근성·검증용)</summary><div id="tablewrap"></div></details>
 </div>
@@ -137,21 +145,18 @@ const app = document.getElementById('app');
 const tip = document.getElementById('tip');
 
 const weeks = D.price.map(p => p.week_id);
-const wkIdx = Object.fromEntries(weeks.map((w,i)=>[w,i]));
-const byWeek = (arr, key) => { const m={}; arr.forEach(r=>m[r.week_id]=r); return m; };
+const byWeek = arr => { const m={}; arr.forEach(r=>m[r.week_id]=r); return m; };
 const flowM = byWeek(D.flow);
 const weekMeta = byWeek(D.weeks);
 const labelM = byWeek(D.labels);
 const trend = {}; const news = {};
 D.narrative.forEach(r => {
-  if (r.source==='gtrends' && r.keyword==='에코프로') trend[r.week_id]=r;
-  if (r.source==='bigkinds' && r.keyword==='에코프로') news[r.week_id]=r;
+  if (r.source==='gtrends' && r.keyword===D.main_keyword) trend[r.week_id]=r;
+  if (r.source==='bigkinds' && r.keyword===D.main_keyword) news[r.week_id]=r;
 });
-// 이벤트 → 주 매핑
 const evByWeek = {};
 D.events.forEach(e => {
   const d = new Date(e.date); if (isNaN(d)) return;
-  // ISO week id
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dow = (t.getUTCDay()+6)%7; t.setUTCDate(t.getUTCDate()-dow+3);
   const y = t.getUTCFullYear();
@@ -162,7 +167,7 @@ D.events.forEach(e => {
 });
 
 if (!weeks.length) {
-  app.innerHTML = '<div class="panel"><div class="empty">아직 데이터가 없습니다. 첫 수집 배치(Actions) 실행 후 이 페이지가 채워집니다.</div></div>';
+  app.innerHTML = '<div class="panel"><div class="empty">이 종목의 데이터가 아직 없습니다. 다음 배치(Actions)에서 수집됩니다.</div></div>';
 } else { render(); }
 
 function render() {
@@ -181,6 +186,7 @@ const STAGE = {dormant:['휴면','--band-dormant'], genesis:['생성','--band-ge
 
 function scale(vals, H, pad=0.06, zero=false) {
   const v = vals.filter(x=>x!=null && !isNaN(x));
+  if (!v.length) return { y: () => H/2, lo:0, hi:0, empty:true };
   let lo = Math.min(...v), hi = Math.max(...v);
   if (zero) { lo = Math.min(lo,0); hi = Math.max(hi,0); }
   if (lo===hi) { lo-=1; hi+=1; }
@@ -188,13 +194,13 @@ function scale(vals, H, pad=0.06, zero=false) {
   return { y: x => H - (x-lo)/(hi-lo)*H, lo, hi };
 }
 function ticks(lo, hi, k=4) {
+  if (lo===hi) return [];
   const span=(hi-lo)/k, mag=Math.pow(10,Math.floor(Math.log10(span)));
   const stp=[1,2,2.5,5,10].map(m=>m*mag).find(s=>span/s<=1)||mag*10;
   const out=[]; for(let t=Math.ceil(lo/stp)*stp; t<=hi; t+=stp) out.push(t);
   return out;
 }
 function bands(H) {
-  // 연속 동일 stage 구간을 밴드로
   let out='', i=0;
   while (i<n) {
     const l = labelM[weeks[i]];
@@ -248,6 +254,12 @@ function panel(title, legendItems, H, inner, hoverHTML) {
   app.appendChild(div);
 }
 
+function emptyPanel(title, msg) {
+  const div=document.createElement('div'); div.className='panel';
+  div.innerHTML=`<p class="ptitle">${title}</p><div class="empty">${msg}</div>`;
+  app.appendChild(div);
+}
+
 function hoverCommon(i) {
   const w=weeks[i], p=D.price[i], f=flowM[w]||{}, l=labelM[w], t=trend[w], nn=news[w];
   const wm=weekMeta[w]||{};
@@ -262,7 +274,7 @@ function hoverCommon(i) {
   return h;
 }
 
-/* ── 패널 1: 주봉 캔들 + 밴드 + 이벤트 마커 ── */
+/* 패널 1: 주봉 캔들 */
 {
   const H=300;
   const sc=scale(D.price.flatMap(p=>[p.high,p.low]),H);
@@ -274,7 +286,6 @@ function hoverCommon(i) {
     const y0=sc.y(Math.max(p.open,p.close)), y1=sc.y(Math.min(p.open,p.close));
     inner+=`<rect x="${X(i)-bw/2}" y="${y0}" width="${bw}" height="${Math.max(1.5,y1-y0)}" fill="${c}" rx="1.5" stroke="var(--surface-1)" stroke-width="1"/>`;
   });
-  // 이벤트 마커 (상단 다이아)
   weeks.forEach((w,i)=>{ if(evByWeek[w])
     inner+=`<path d="M ${X(i)} 6 l 5 5 -5 5 -5 -5 z" fill="var(--s2)" stroke="var(--surface-1)" stroke-width="1"/>`; });
   inner+=`<line x1="${PADL}" x2="${W-PADR}" y1="${H}" y2="${H}" stroke="var(--axis)"/>`+xAxis(H);
@@ -286,60 +297,61 @@ function hoverCommon(i) {
     H, inner, hoverCommon);
 }
 
-/* ── 패널 2: 수급 — 개인 순매수 비중 & 회전율 ── */
+/* 패널 2: 수급 */
 {
   const H=150;
   const rr=weeks.map(w=>(flowM[w]||{}).retail_ratio);
   const tv=weeks.map((w,i)=>D.price[i].turnover_w);
-  const sc=scale([...rr,...tv].filter(x=>x!=null),H,0.08,true);
-  let inner=bands(H)+gridY(sc,H,v=>pct(v));
-  const zy=sc.y(0);
-  inner+=`<line x1="${PADL}" x2="${W-PADR}" y1="${zy}" y2="${zy}" stroke="var(--axis)" stroke-width="1"/>`;
-  inner+=line(tv,sc,'var(--s3)')+line(rr,sc,'var(--s1)');
-  inner+=xAxis(H);
-  panel('서사층-B (시장 안): 개인 순매수 비중 · 주간 회전율(손바뀜)',
-    [['var(--s1)','개인 순매수 비중'],['var(--s3)','회전율 (거래대금/시총)']],
-    H, inner, hoverCommon);
+  const vals=[...rr,...tv].filter(x=>x!=null&&!isNaN(x));
+  if (vals.length) {
+    const sc=scale(vals,H,0.08,true);
+    let inner=bands(H)+gridY(sc,H,v=>pct(v));
+    inner+=`<line x1="${PADL}" x2="${W-PADR}" y1="${sc.y(0)}" y2="${sc.y(0)}" stroke="var(--axis)" stroke-width="1"/>`;
+    inner+=line(tv,sc,'var(--s3)')+line(rr,sc,'var(--s1)');
+    inner+=xAxis(H);
+    panel('서사층-B (시장 안): 개인 순매수 비중 · 주간 회전율(손바뀜)',
+      [['var(--s1)','개인 순매수 비중'],['var(--s3)','회전율 (거래대금/시총)']],
+      H, inner, hoverCommon);
+  } else emptyPanel('서사층-B (시장 안)','수급 데이터가 아직 없습니다 (KRX 세부 API 재시도 대기 §8.6).');
 }
 
-/* ── 패널 3: 공매도 — 비중 & 잔고 증감 ── */
+/* 패널 3: 공매도 */
 {
   const H=150;
   const sr=weeks.map(w=>(flowM[w]||{}).short_ratio);
   const sb=weeks.map(w=>(flowM[w]||{}).short_bal_wow);
-  const sc=scale([...sr,...sb].filter(x=>x!=null),H,0.08,true);
-  let inner=bands(H)+gridY(sc,H,v=>pct(v));
-  inner+=`<line x1="${PADL}" x2="${W-PADR}" y1="${sc.y(0)}" y2="${sc.y(0)}" stroke="var(--axis)"/>`;
-  inner+=line(sb,sc,'var(--s5)','4 3')+line(sr,sc,'var(--s2)');
-  inner+=xAxis(H);
-  panel('반대 서사: 공매도 비중 · 잔고 주간 증감 (점선, 공표지연 known_at 반영 전 원값)',
-    [['var(--s2)','공매도/총거래량'],['var(--s5)','잔고 증감률 (점선)']],
-    H, inner, hoverCommon);
+  const vals=[...sr,...sb].filter(x=>x!=null&&!isNaN(x));
+  if (vals.length) {
+    const sc=scale(vals,H,0.08,true);
+    let inner=bands(H)+gridY(sc,H,v=>pct(v));
+    inner+=`<line x1="${PADL}" x2="${W-PADR}" y1="${sc.y(0)}" y2="${sc.y(0)}" stroke="var(--axis)"/>`;
+    inner+=line(sb,sc,'var(--s5)','4 3')+line(sr,sc,'var(--s2)');
+    inner+=xAxis(H);
+    panel('반대 서사: 공매도 비중 · 잔고 주간 증감 (점선, 공표지연 known_at 반영 전 원값)',
+      [['var(--s2)','공매도/총거래량'],['var(--s5)','잔고 증감률 (점선)']],
+      H, inner, hoverCommon);
+  } else emptyPanel('반대 서사 (공매도)','공매도 데이터가 아직 없습니다 (KRX 세부 API 재시도 대기 §8.6).');
 }
 
-/* ── 패널 4: 서사층-A — 구글 트렌드 z & 뉴스 모멘텀 ── */
+/* 패널 4: 서사층-A */
 {
   const H=150;
   const tz=weeks.map(w=>trend[w]?trend[w].z52:null);
   const nm=weeks.map(w=>news[w]?news[w].momentum:null);
-  const has = tz.some(v=>v!=null)||nm.some(v=>v!=null);
-  if (has) {
-    const sc=scale([...tz,...nm].filter(x=>x!=null),H,0.08,true);
+  const vals=[...tz,...nm].filter(x=>x!=null&&!isNaN(x));
+  if (vals.length) {
+    const sc=scale(vals,H,0.08,true);
     let inner=bands(H)+gridY(sc,H,v=>(+v).toFixed(1));
     inner+=`<line x1="${PADL}" x2="${W-PADR}" y1="${sc.y(0)}" y2="${sc.y(0)}" stroke="var(--axis)"/>`;
     inner+=line(tz,sc,'var(--s4)')+line(nm,sc,'var(--s1)','4 3');
     inner+=xAxis(H);
-    panel('서사층-A (시장 밖): 구글 트렌드 z-score · 뉴스 모멘텀 (점선, 빅카인즈 수동)',
+    panel(`서사층-A (시장 밖): 구글 트렌드 z-score('${D.main_keyword}') · 뉴스 모멘텀 (점선, 빅카인즈 수동)`,
       [['var(--s4)','트렌드 z (52주 롤링)'],['var(--s1)','뉴스 모멘텀 (점선)']],
       H, inner, hoverCommon);
-  } else {
-    const div=document.createElement('div'); div.className='panel';
-    div.innerHTML='<p class="ptitle">서사층-A (시장 밖)</p><div class="empty">트렌드/뉴스 데이터가 아직 없습니다 (수집 대기 또는 수동 CSV 미입력).</div>';
-    app.appendChild(div);
-  }
+  } else emptyPanel('서사층-A (시장 밖)','트렌드/뉴스 데이터가 아직 없습니다.');
 }
 
-/* ── 데이터 표 ── */
+/* 데이터 표 */
 {
   let t='<table class="dt"><tr><th>주</th><th>종가</th><th>주간수익률</th><th>회전율</th><th>개인비중</th><th>공매도비중</th><th>잔고증감</th><th>트렌드z</th><th>단계</th></tr>';
   weeks.forEach((w,i)=>{
@@ -356,18 +368,26 @@ function hoverCommon(i) {
 
 
 def main():
-    if not DB.exists():
-        payload = {"generated_at": date.today().isoformat(), "ticker": TICKER,
-                   "weeks": [], "price": [], "flow": [], "narrative": [],
-                   "labels": [], "events": []}
-        print("[WARN] nexus.db 없음 — 빈 대시보드 생성")
-    else:
-        payload = build_payload()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    html = HTML.replace("__PAYLOAD__",
-                        json.dumps(payload, ensure_ascii=False, default=str))
-    OUT.write_text(html, encoding="utf-8")
-    print(f"[DONE] {OUT} ({len(html)//1024} KB, {len(payload['price'])} weeks)")
+    DOCS.mkdir(parents=True, exist_ok=True)
+    for ticker, info in TICKERS.items():
+        payload = build_payload(ticker)
+        nav_parts = []
+        for t, v in TICKERS.items():
+            cls = ' class="on"' if t == ticker else ''
+            nav_parts.append(f'<a href="{t}.html"{cls}>{v["name"]}</a>')
+        nav = "".join(nav_parts)
+        html = (HTML
+                .replace("__NAME__", info["name"])
+                .replace("__TICKER__", ticker)
+                .replace("__NOTE__", info["note"])
+                .replace("__NAV__", nav)
+                .replace("__PAYLOAD__",
+                         json.dumps(payload, ensure_ascii=False, default=str)))
+        out = DOCS / f"{ticker}.html"
+        out.write_text(html, encoding="utf-8")
+        print(f"[DONE] {out} ({len(html)//1024} KB, {len(payload['price'])} weeks)")
+    shutil.copyfile(DOCS / "086520.html", DOCS / "index.html")
+    print("[DONE] index.html = 086520 (에코프로)")
 
 
 if __name__ == "__main__":
