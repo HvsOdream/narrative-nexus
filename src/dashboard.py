@@ -442,6 +442,31 @@ def build_hyp_page():
             else:
                 b = f"지금까지 최고 주간 {best*100:+.1f}%" if best is not None else "판정창 진입 전"
                 detail = f"진행 중 · 관측 {len(rows_)}주 경과 · {b} · 기준 +{float(h['threshold'])*100:.0f}%"
+        if con is not None and h["check_type"] == "holders_hold":
+            thr = float(h["threshold"])
+            try:
+                rows_ = con.execute(
+                    "SELECT known_at, value FROM weekly_real WHERE series_id=? ORDER BY known_at",
+                    ("minority_holders_" + h["ticker"],)).fetchall()
+            except sqlite3.OperationalError:
+                rows_ = []
+            base = [(k, v) for k, v in rows_ if k <= h["sealed_at"]]
+            nxt = [(k, v) for k, v in rows_ if k > h["sealed_at"]]
+            if not base:
+                detail = "기준 보고서 수집 대기 (DART 수집 후 자동 판정)"
+            else:
+                b_k, b_v = base[-1]
+                if nxt:
+                    n_k, n_v = nxt[0]
+                    ratio = n_v / b_v if b_v else 0
+                    if ratio >= thr:
+                        status = "confirmed"
+                        detail = f"판정: {n_k} 보고서 소액주주 {n_v:,.0f}명 = 기준({b_k} {b_v:,.0f}명)의 {ratio*100:.1f}% ≥ {thr*100:.0f}%"
+                    else:
+                        status = "refuted"
+                        detail = f"판정: {n_k} 보고서 {n_v:,.0f}명 = 기준의 {ratio*100:.1f}% < {thr*100:.0f}% — 네트워크 해체 신호"
+                else:
+                    detail = f"진행 중 · 기준 {b_k} 소액주주 {b_v:,.0f}명 · 봉인 후 신규 보고서 대기"
         if status == "confirmed":
             won += 1
             stamp = '<span class="stamp" style="color:#0ca30c">✅ 적중</span>'
