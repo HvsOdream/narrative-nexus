@@ -2,8 +2,8 @@ name: weekly-batch
 
 on:
   schedule:
-    - cron: "0 0 * * 6"   # 토요일 09:00 KST (§2.1 배치 요일)
-  workflow_dispatch: {}    # 수동 실행 (첫 백필 포함)
+    - cron: "0 0 * * 6"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   batch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30    # §8.6 주간 배치 30분 상한
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +28,8 @@ jobs:
         run: pip install pykrx finance-datareader pytrends pandas lxml
 
       - name: Collect
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
         run: python src/collect_v1.py
         continue-on-error: true
 
