@@ -99,6 +99,55 @@ def collect_mktcap(t):
 
 # ── ② 실물 접점 ─────────────────────────────────────────────
 
+def collect_dart_holders():
+    """DART 소액주주 현황 (mrhlSttus) — 신자 집합의 하드 카운트 (§8.3 네트워크축)."""
+    import io
+    import os
+    import zipfile
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    import json as _json
+    import pandas as _pd
+    key = os.environ.get("DART_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("DART_API_KEY 미설정")
+    z = urllib.request.urlopen(
+        f"https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key={key}", timeout=120).read()
+    root = ET.fromstring(zipfile.ZipFile(io.BytesIO(z)).read("CORPCODE.xml"))
+    corp = {}
+    for el in root.iter("list"):
+        sc = (el.findtext("stock_code") or "").strip()
+        if sc in TICKERS:
+            corp[sc] = el.findtext("corp_code").strip()
+    rows = []
+    for t, cc in corp.items():
+        for y in range(2022, int(TO[:4]) + 1):
+            for rc in ("11013", "11012", "11014", "11011"):
+                q = (f"https://opendart.fss.or.kr/api/mrhlSttus.json?crtfc_key={key}"
+                     f"&corp_code={cc}&bsns_year={y}&reprt_code={rc}")
+                try:
+                    j = _json.loads(urllib.request.urlopen(q, timeout=30).read())
+                except Exception:
+                    continue
+                if j.get("status") != "000":
+                    continue
+                for it in j.get("list", []):
+                    rows.append({
+                        "ticker": t, "bsns_year": y, "reprt_code": rc,
+                        "rcept_no": it.get("rcept_no", ""),
+                        "known_at": str(it.get("rcept_no", ""))[:8],
+                        "se": it.get("se", ""),
+                        "shrholdr_co": it.get("shrholdr_co", ""),
+                        "shrholdr_tot_co": it.get("shrholdr_tot_co", ""),
+                        "hold_stock_co": it.get("hold_stock_co", ""),
+                        "stock_tot_co": it.get("stock_tot_co", ""),
+                        "hold_stock_rate": it.get("hold_stock_rate", ""),
+                    })
+                time.sleep(0.3)
+    save(_pd.DataFrame(rows), "dart", "minority_holders",
+         {"note": "known_at = rcept_no 앞 8자리(공시접수일) — 발표일 귀속(원칙 2)"})
+
+
 def collect_usdkrw():
     import FinanceDataReader as fdr
     df = fdr.DataReader("USD/KRW", FROM_D, TO_D)
@@ -140,6 +189,7 @@ def main():
         step(f"mktcap_{t}", collect_mktcap, t)
         time.sleep(3)
     step("usdkrw", collect_usdkrw)
+    step("dart_holders", collect_dart_holders)
     if not skip_trends:
         step("gtrends", collect_trends)
 
