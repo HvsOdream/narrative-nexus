@@ -367,6 +367,104 @@ function hoverCommon(i) {
 """
 
 
+HYP_PAGE = r"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>서사 넥서스 — 가설 보드</title>
+<style>
+  body { margin:0; background:#f9f9f7; color:#0b0b0b;
+         font-family:system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif; }
+  @media (prefers-color-scheme: dark) { body { background:#0d0d0d; color:#fff; }
+    .card, .nav a { background:#1a1a19 !important; border-color:rgba(255,255,255,.1) !important; }
+    .muted { color:#898781 !important; } .crit { background:#0d0d0d !important; } }
+  .wrap { max-width:860px; margin:0 auto; padding:20px 16px 48px; }
+  h1 { font-size:20px; margin:8px 0 2px; }
+  .nav { display:flex; gap:8px; margin:0 0 10px; flex-wrap:wrap; }
+  .nav a { font-size:13px; text-decoration:none; color:inherit; border:1px solid rgba(11,11,11,.1);
+           border-radius:16px; padding:4px 12px; background:#fcfcfb; }
+  .tally { font-size:14px; margin:6px 0 16px; }
+  .caveat { font-size:12px; color:#898781; margin:4px 0 16px; }
+  .card { background:#fcfcfb; border:1px solid rgba(11,11,11,.1); border-radius:10px;
+          padding:14px 16px; margin-bottom:14px; }
+  .stamp { float:right; font-size:14px; font-weight:700; }
+  .title { font-size:15px; font-weight:600; margin:0 0 6px; }
+  .stmt { font-size:13px; line-height:1.6; margin:0 0 8px; }
+  .crit { font-size:12px; background:#f9f9f7; border-radius:8px; padding:8px 10px; margin:0 0 8px;
+          font-variant-numeric:tabular-nums; }
+  .muted { font-size:12px; color:#52514e; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔮 가설 보드 — 봉인과 판정</h1>
+  <div class="nav"><a href="index.html">에코프로</a><a href="001570.html">금양</a><a href="000250.html">삼천당제약</a></div>
+  <div class="tally"><b>__TALLY__</b> · 갱신 __GEN__ (매주 토요일 자동 판정)</div>
+  <div class="caveat">⚠ 사전등록 검증 장치입니다(§8.5). 가설은 봉인 후 수정 불가 — 수정하려면 새 가설로 등록합니다. 판정은 배치가 자동으로 하며, 매매 신호가 아닙니다.</div>
+  __CARDS__
+</div>
+</body>
+</html>
+"""
+
+
+def build_hyp_page():
+    import csv as _csv
+    p = ROOT / "data" / "manual" / "hypotheses.csv"
+    if not p.exists():
+        return
+    with open(p, encoding="utf-8-sig") as f:
+        hyps = list(_csv.DictReader(f))
+    if not hyps:
+        return
+    con = sqlite3.connect(DB) if DB.exists() else None
+    cards, won, lost, live = [], 0, 0, 0
+    for h in hyps:
+        status, detail = "open", "판정 대기 (데이터 없음)"
+        if con is not None and h["check_type"] == "ret_above":
+            thr = float(h["threshold"])
+            rows_ = con.execute(
+                "SELECT week_id, ret_w FROM weekly_price WHERE ticker=? AND week_id>? AND week_id<=? ORDER BY week_id",
+                (h["ticker"], h["start_week"], h["deadline_week"])).fetchall()
+            latest = con.execute("SELECT MAX(week_id) FROM weekly_price WHERE ticker=?",
+                                 (h["ticker"],)).fetchone()[0]
+            vals = [r for _, r in rows_ if r is not None]
+            hits = [(w, r) for w, r in rows_ if r is not None and r >= thr]
+            best = max(vals) if vals else None
+            if hits:
+                status = "confirmed"
+                detail = f"판정: {hits[0][0]} 주간 +{hits[0][1]*100:.1f}% ≥ +{thr*100:.0f}% 충족"
+            elif latest is not None and latest >= h["deadline_week"]:
+                status = "refuted"
+                b = f" — 판정창 최고 +{best*100:.1f}%" if best is not None else ""
+                detail = f"기한({h['deadline_week']}) 내 미출현{b}"
+            else:
+                b = f"지금까지 최고 주간 {best*100:+.1f}%" if best is not None else "판정창 진입 전"
+                detail = f"진행 중 · 관측 {len(rows_)}주 경과 · {b} · 기준 +{float(h['threshold'])*100:.0f}%"
+        if status == "confirmed":
+            won += 1
+            stamp = '<span class="stamp" style="color:#0ca30c">✅ 적중</span>'
+        elif status == "refuted":
+            lost += 1
+            stamp = '<span class="stamp" style="color:#d03b3b">❌ 기각</span>'
+        else:
+            live += 1
+            stamp = '<span class="stamp" style="color:#898781">⏳ 진행 중</span>'
+        cards.append(
+            f'<div class="card">{stamp}<p class="title">{h["id"]} · {h["title"]}</p>'
+            f'<p class="stmt">{h["statement"]}</p>'
+            f'<div class="crit">{detail}</div>'
+            f'<div class="muted">봉인 {h["sealed_at"]} · 판정창 {h["start_week"]} 초과 ~ {h["deadline_week"]} · {h.get("note","")}</div></div>')
+    if con is not None:
+        con.close()
+    tally = f"통산 {won}승 {lost}패 · 진행 {live}건"
+    html = (HYP_PAGE.replace("__CARDS__", "".join(cards))
+            .replace("__TALLY__", tally).replace("__GEN__", date.today().isoformat()))
+    (DOCS / "hypotheses.html").write_text(html, encoding="utf-8")
+    print(f"[DONE] hypotheses.html ({tally})")
+
+
 def main():
     DOCS.mkdir(parents=True, exist_ok=True)
     for ticker, info in TICKERS.items():
@@ -375,6 +473,7 @@ def main():
         for t, v in TICKERS.items():
             cls = ' class="on"' if t == ticker else ''
             nav_parts.append(f'<a href="{t}.html"{cls}>{v["name"]}</a>')
+        nav_parts.append('<a href="hypotheses.html">🔮 가설 보드</a>')
         nav = "".join(nav_parts)
         html = (HTML
                 .replace("__NAME__", info["name"])
@@ -388,6 +487,7 @@ def main():
         print(f"[DONE] {out} ({len(html)//1024} KB, {len(payload['price'])} weeks)")
     shutil.copyfile(DOCS / "086520.html", DOCS / "index.html")
     print("[DONE] index.html = 086520 (에코프로)")
+    build_hyp_page()
 
 
 if __name__ == "__main__":
