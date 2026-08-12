@@ -222,6 +222,33 @@ def build_labels(weeks: pd.DataFrame) -> pd.DataFrame | None:
     return pd.DataFrame(rows) if rows else None
 
 
+def build_holders() -> pd.DataFrame | None:
+    """DART 소액주주 수 → weekly_real (series minority_holders_<ticker>, 발표일 귀속)."""
+    p = RAW / "dart" / "minority_holders.csv"
+    if not p.exists():
+        print("  [SKIP] raw 없음: dart/minority_holders.csv")
+        return None
+    df = pd.read_csv(p, encoding="utf-8-sig", dtype={"ticker": str, "known_at": str})
+    df = df[df["se"].astype(str).str.contains("소액", na=False)]
+    if df.empty:
+        return None
+    df["ticker"] = df["ticker"].str.zfill(6)
+    df["value"] = pd.to_numeric(
+        df["shrholdr_co"].astype(str).str.replace(",", ""), errors="coerce")
+    df["known_dt"] = pd.to_datetime(df["known_at"], format="%Y%m%d", errors="coerce")
+    df = df.dropna(subset=["known_dt", "value"])
+    df["week_id"] = df["known_dt"].map(week_id)
+    out = df.sort_values("known_dt").groupby(["week_id", "ticker"]).agg(
+        value=("value", "last"), known_dt=("known_dt", "max")).reset_index()
+    out["series_id"] = "minority_holders_" + out["ticker"]
+    out["known_at"] = out["known_dt"].dt.date.astype(str)
+    out["yoy"] = None
+    out["period_start"] = None
+    out["period_end"] = None
+    return out[["week_id", "series_id", "value", "yoy", "period_start",
+                "period_end", "known_at"]]
+
+
 def build_events() -> pd.DataFrame | None:
     p = MANUAL / "events.csv"
     if not p.exists():
@@ -262,6 +289,7 @@ def main():
     narr = build_narrative()
     ev = build_events()
     lbl = build_labels(weeks)
+    hol = build_holders()
 
     DB.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB)
@@ -285,11 +313,13 @@ def main():
         ev.to_sql("events", con, if_exists="replace", index=False)
     if lbl is not None:
         lbl.to_sql("cycle_labels", con, if_exists="replace", index=False)
+    if hol is not None:
+        hol.to_sql("weekly_real", con, if_exists="replace", index=False)
     con.commit()
 
     print(f"\n[DONE] {DB}")
     for t in ["weeks", "weekly_price", "weekly_flow", "weekly_credit",
-              "weekly_narrative", "events", "cycle_labels"]:
+              "weekly_narrative", "events", "cycle_labels", "weekly_real"]:
         try:
             n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
             print(f"  {t}: {n} rows")
